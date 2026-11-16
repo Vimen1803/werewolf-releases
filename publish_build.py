@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """Publica WereWolf en GitHub Releases (gratis) para que el launcher lo descargue.
 
-Uso habitual (en tu PC, después de compilar):
+Uso habitual:
 
     python distribution/publish_build.py --client
-        → publica desktop/target/release/werewolf.exe con la versión de desktop/Cargo.toml
+        → publica desktop/target/release/werewolf(.exe) del sistema en el que estás
+    python distribution/publish_build.py --build windows=dir1 --build linux=dir2 --build macos=dir3
+        → publica una versión con las builds de varios sistemas a la vez
     python distribution/publish_build.py ruta/a/la/build
-        → publica una carpeta completa (werewolf.exe + otros archivos)
-    python distribution/publish_build.py --launcher ruta/al/WereWolf_0.4.0_x64-setup.exe
-        → actualiza el instalador del launcher (botón «Descargar» de la web)
+        → publica una carpeta de Windows (werewolf.exe + otros archivos)
+    python distribution/publish_build.py --launcher [sistema=]ruta/al/instalador
+        → actualiza el instalador del launcher de ese sistema (por defecto, windows)
+
+Cada sistema tiene su manifiesto en la misma release: version.json (Windows),
+version-linux.json y version-macos.json. La web sirve el que pide el launcher.
 
 Configuración (variables de entorno o distribution/.env):
     GITHUB_RELEASES_REPO  repo PÚBLICO de descargas, p. ej. Vimen1803/werewolf-releases
@@ -48,6 +53,17 @@ DEFAULT_EXE = "werewolf.exe"
 LAUNCHER_TAG = "launcher"
 LAUNCHER_ASSET = "WereWolf-Setup.exe"
 MANIFEST_ASSET = "version.json"
+PLATFORMS = ("windows", "linux", "macos")
+EXE_BY_PLATFORM = {"windows": "werewolf.exe", "linux": "werewolf", "macos": "werewolf"}
+LAUNCHER_ASSETS = {"windows": "WereWolf-Setup.exe", "linux": "WereWolf-Linux.deb", "macos": "WereWolf-macOS.dmg"}
+
+
+def manifest_asset(platform: str) -> str:
+    return MANIFEST_ASSET if platform == "windows" else f"version-{platform}.json"
+
+
+def host_platform() -> str:
+    return "windows" if sys.platform.startswith("win") else "macos" if sys.platform == "darwin" else "linux"
 DEFAULT_EXCLUDES = ["*.pdb", "*.ilk", "*.log", ".DS_Store", "Thumbs.db", "desktop.ini"]
 
 
@@ -82,9 +98,11 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
-def asset_name(relative: str) -> str:
-    """Las releases son planas: data/a.pak se sube como data__a.pak."""
-    return relative.replace("/", "__")
+def asset_name(relative: str, platform: str = "windows") -> str:
+    """Las releases son planas: data/a.pak se sube como data__a.pak (y con el
+    sistema delante fuera de Windows, porque Linux y macOS comparten nombres)."""
+    flat = relative.replace("/", "__")
+    return flat if platform == "windows" else f"{platform}__{flat}"
 
 
 def scan_build(root: Path, excludes: list[str]) -> list[dict]:
@@ -182,85 +200,111 @@ def github_from_env() -> GitHub:
 
 
 def publish(build_dir: Path, version: str, exe: str, excludes: list[str], dry_run: bool = False, gh: GitHub | None = None) -> dict:
-    if not build_dir.is_dir():
-        raise SystemExit(f"No existe la carpeta de la build: {build_dir}")
-    if not (build_dir / exe).is_file():
-        raise SystemExit(f"El ejecutable '{exe}' no está dentro de {build_dir}")
-    print(f"Calculando hashes en {build_dir} …")
-    files = scan_build(build_dir, excludes)
-    total = sum(item["size"] for item in files)
-    print(f"{len(files)} archivos, {total / 1_048_576:.1f} MB")
+    """Publica solo Windows (compatibilidad con el uso anterior)."""
+    return publish_many({"windows": (build_dir, exe)}, version, excludes, dry_run, gh)
+
+
+def publish_many(builds: dict, version: str, excludes: list[str], dry_run: bool = False, gh: GitHub | None = None) -> dict:
+    """builds: {sistema: (carpeta, ejecutable)}. Todas van en la release v<versión>."""
+    scanned = {}
+    for platform, (build_dir, exe) in builds.items():
+        if platform not in PLATFORMS:
+            raise SystemExit(f"Sistema desconocido: {platform} (usa {', '.join(PLATFORMS)})")
+        if not build_dir.is_dir():
+            raise SystemExit(f"No existe la carpeta de la build de {platform}: {build_dir}")
+        if not (build_dir / exe).is_file():
+            raise SystemExit(f"El ejecutable '{exe}' no está dentro de {build_dir}")
+        print(f"[{platform}] calculando hashes en {build_dir} …")
+        scanned[platform] = scan_build(build_dir, excludes)
+    missing = [p for p in PLATFORMS if p not in builds]
+    if missing:
+        print(f"Aviso: esta versión no incluye {', '.join(missing)}; esos jugadores no podrán actualizar hasta que publiques su build.")
 
     if gh is None and not dry_run:
         gh = github_from_env()
     tag = f"v{version}"
-    previous = None
+    known: dict[str, str] = {}
     if gh:
         if gh.release_by_tag(tag):
             raise SystemExit(f"La versión {version} ya está publicada. Súbela con `npm run release:patch` y vuelve a compilar.")
         latest = gh.latest()
         if latest:
-            previous = gh.asset_json(latest, MANIFEST_ASSET)
-            print(f"Versión publicada ahora: {(previous or {}).get('version', latest['tag_name'])}")
-    known = {item["sha256"]: item["url"] for item in (previous or {}).get("files", [])}
+            for platform in PLATFORMS:
+                previous = gh.asset_json(latest, manifest_asset(platform))
+                for item in (previous or {}).get("files", []):
+                    known[item["sha256"]] = item["url"]
+            print(f"Versión publicada ahora: {latest['tag_name']}")
 
     target = gh or GitHub("OWNER/REPO", "")
-    entries, pending = [], []
-    for item in files:
-        if item["sha256"] in known:
+    manifests, pending = {}, []
+    for platform, files in scanned.items():
+        entries = []
+        for item in files:
+            if item["sha256"] not in known:
+                name = asset_name(item["path"], platform)
+                known[item["sha256"]] = target.download_url(tag, name)  # copias idénticas: una sola subida
+                pending.append((platform, item, name))
             entries.append({**item, "url": known[item["sha256"]]})
-        else:
-            name = asset_name(item["path"])
-            known[item["sha256"]] = target.download_url(tag, name)  # copias idénticas: una sola subida
-            entries.append({**item, "url": known[item["sha256"]]})
-            pending.append((item, name))
-    manifest = {
-        "game": "werewolf",
-        "channel": "stable",
-        "version": version,
-        "exe": exe,
-        "publishedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "totalSize": total,
-        "files": entries,
-    }
-    print(f"{len(pending)} archivos nuevos o modificados; {len(files) - len(pending)} sin cambios.")
+        manifests[platform] = {
+            "game": "werewolf",
+            "channel": "stable",
+            "platform": platform,
+            "version": version,
+            "exe": builds[platform][1],
+            "publishedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "totalSize": sum(item["size"] for item in files),
+            "files": entries,
+        }
+    print(f"{len(pending)} archivos nuevos o modificados.")
     if dry_run:
-        print(json.dumps(manifest, indent=2, ensure_ascii=False)[:2000])
-        return {"manifest": manifest, "uploaded": []}
+        print(json.dumps(manifests, indent=2, ensure_ascii=False)[:3000])
+        return {"manifest": manifests.get("windows"), "manifests": manifests, "uploaded": []}
 
-    release = gh.create_release(tag, f"WereWolf {version}", f"Cliente de escritorio {version}.")
+    release = gh.create_release(tag, f"WereWolf {version}", f"Cliente de escritorio {version} ({', '.join(builds)}).")
     uploaded = []
-    for index, (item, name) in enumerate(pending, 1):
-        gh.upload(release, build_dir / item["path"], name)
-        uploaded.append(item["path"])
-        print(f"  [{index}/{len(pending)}] {item['path']}")
+    for index, (platform, item, name) in enumerate(pending, 1):
+        gh.upload(release, builds[platform][0] / item["path"], name)
+        uploaded.append(item["path"] if platform == "windows" else f"{platform}:{item['path']}")
+        print(f"  [{index}/{len(pending)}] {platform}: {item['path']}")
     with tempfile.TemporaryDirectory() as folder:
-        manifest_path = Path(folder) / MANIFEST_ASSET
-        manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
-        gh.upload(release, manifest_path, MANIFEST_ASSET)
+        for platform, manifest in manifests.items():
+            path = Path(folder) / manifest_asset(platform)
+            path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+            gh.upload(release, path, path.name)
     gh.update_release(release["id"], make_latest="true")
     print(f"Publicada la versión {version}. Manifiesto: {gh.web}/{gh.repo}/releases/latest/download/{MANIFEST_ASSET}")
-    return {"manifest": manifest, "uploaded": uploaded}
+    return {"manifest": manifests.get("windows"), "manifests": manifests, "uploaded": uploaded}
 
 
-def publish_launcher(installer: Path, version: str, gh: GitHub | None = None) -> str:
+def publish_launcher(installer: Path, version: str, gh: GitHub | None = None, platform: str = "windows") -> str:
     if not installer.is_file():
         raise SystemExit(f"No existe el instalador: {installer}")
+    if platform not in LAUNCHER_ASSETS:
+        raise SystemExit(f"Sistema desconocido: {platform}")
     gh = gh or github_from_env()
-    release = gh.release_by_tag(LAUNCHER_TAG) or gh.create_release(LAUNCHER_TAG, "Launcher de WereWolf", "Instalador del launcher para Windows.")
-    gh.upload(release, installer, LAUNCHER_ASSET)
+    asset = LAUNCHER_ASSETS[platform]
+    release = gh.release_by_tag(LAUNCHER_TAG) or gh.create_release(LAUNCHER_TAG, "Launcher de WereWolf", "Instaladores del launcher (Windows, Linux y macOS).")
+    gh.upload(release, installer, asset)
     gh.update_release(release["id"], name=f"Launcher de WereWolf {version}", make_latest="false")
-    url = gh.download_url(LAUNCHER_TAG, LAUNCHER_ASSET)
-    print(f"Launcher {version} publicado: {url}")
+    url = gh.download_url(LAUNCHER_TAG, asset)
+    print(f"Launcher {version} ({platform}) publicado: {url}")
     return url
+
+
+def split_platform(value: str, default: str = "windows") -> tuple[str, Path]:
+    head, sep, tail = value.partition("=")
+    if sep and head in PLATFORMS:
+        return head, Path(tail)
+    return default, Path(value)
 
 
 def main(argv: list[str] | None = None) -> int:
     load_dotenv(Path(__file__).with_name(".env"))
     parser = argparse.ArgumentParser(description="Publica WereWolf en GitHub Releases.")
-    parser.add_argument("build_dir", type=Path, nargs="?", help="Carpeta con la build (si no usas --client)")
-    parser.add_argument("--client", action="store_true", help="Publica desktop/target/release/werewolf.exe")
-    parser.add_argument("--launcher", type=Path, help="Sube este instalador del launcher para la web")
+    parser.add_argument("build_dir", type=Path, nargs="?", help="Carpeta con la build de Windows (si no usas --client ni --build)")
+    parser.add_argument("--client", action="store_true", help="Publica desktop/target/release/werewolf(.exe) de este sistema")
+    parser.add_argument("--build", action="append", default=[], metavar="SISTEMA=CARPETA", help="Build de un sistema (windows, linux, macos); se puede repetir")
+    parser.add_argument("--launcher", action="append", default=[], metavar="[SISTEMA=]INSTALADOR", help="Sube el instalador del launcher de ese sistema (por defecto, windows); se puede repetir")
     parser.add_argument("--version", help="Versión (por defecto, la de desktop/Cargo.toml)")
     parser.add_argument("--exe", default=DEFAULT_EXE, help="Ejecutable del juego, relativo a la carpeta de la build")
     parser.add_argument("--exclude", action="append", default=[], help="Patrón a excluir (se puede repetir)")
@@ -274,20 +318,31 @@ def main(argv: list[str] | None = None) -> int:
     if expected and args.version and args.version != expected:
         print(f"Aviso: --version {args.version} no coincide con desktop/Cargo.toml ({expected}). El ejecutable informa de la versión con la que se compiló.")
 
-    if args.launcher:
-        publish_launcher(args.launcher, version)
-        return 0
-    if args.client:
-        built = ROOT / "desktop" / "target" / "release" / DEFAULT_EXE
-        if not built.is_file():
-            raise SystemExit(f"No existe {built}. Compila antes: cd desktop && cargo build --release -p werewolf")
-        with tempfile.TemporaryDirectory() as folder:
-            shutil.copy2(built, Path(folder) / DEFAULT_EXE)
-            publish(Path(folder), version, DEFAULT_EXE, DEFAULT_EXCLUDES + args.exclude, args.dry_run)
-        return 0
-    if not args.build_dir:
-        parser.error("Indica la carpeta de la build, --client o --launcher.")
-    publish(args.build_dir, version, args.exe.replace("\\", "/"), DEFAULT_EXCLUDES + args.exclude, args.dry_run)
+    excludes = DEFAULT_EXCLUDES + args.exclude
+    builds = {}
+    for value in args.build:
+        platform, folder = split_platform(value, "")
+        if not platform:
+            parser.error(f"--build necesita SISTEMA=CARPETA: {value}")
+        builds[platform] = (folder, EXE_BY_PLATFORM[platform])
+    if args.build_dir:
+        builds["windows"] = (args.build_dir, args.exe.replace("\\", "/"))
+    with tempfile.TemporaryDirectory() as folder:
+        if args.client:
+            platform = host_platform()
+            exe = EXE_BY_PLATFORM[platform]
+            built = ROOT / "desktop" / "target" / "release" / exe
+            if not built.is_file():
+                raise SystemExit(f"No existe {built}. Compila antes: cd desktop && cargo build --release -p werewolf")
+            shutil.copy2(built, Path(folder) / exe)
+            builds[platform] = (Path(folder), exe)
+        if builds:
+            publish_many(builds, version, excludes, args.dry_run)
+        for value in args.launcher:
+            platform, installer = split_platform(value)
+            publish_launcher(installer, version, platform=platform)
+    if not builds and not args.launcher:
+        parser.error("Indica la carpeta de la build, --build, --client o --launcher.")
     return 0
 
 
