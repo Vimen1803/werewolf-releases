@@ -1,0 +1,32 @@
+# Publica en las releases de este repo lo que se suba a la rama «publish»:
+#   incoming/VERSION            versión (p. ej. 0.3.1)
+#   incoming/client/…           build del cliente (werewolf.exe y demás)
+#   incoming/launcher/WereWolf-Setup.exe   (opcional) instalador del launcher
+name: Publicar versión
+
+on:
+  push:
+    branches: [publish]
+
+permissions:
+  contents: write
+
+concurrency: publish
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      GITHUB_RELEASES_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publicar cliente
+        run: |
+          version=$(tr -d '[:space:]' < incoming/VERSION)
+          if gh release view "v$version" >/dev/null 2>&1; then echo "v$version ya estaba publicada"; else python publish_build.py incoming/client --version "$version"; fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Publicar launcher
+        if: hashFiles('incoming/launcher/WereWolf-Setup.exe') != ''
+        run: python publish_build.py --launcher incoming/launcher/WereWolf-Setup.exe --version "$(tr -d '[:space:]' < incoming/VERSION)"
