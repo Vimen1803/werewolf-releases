@@ -2,6 +2,7 @@
 #   incoming/VERSION                         versión (p. ej. 0.3.1)
 #   incoming/<sistema>/client/…              build del cliente (windows, linux, macos)
 #   incoming/<sistema>/launcher/<instalador> (opcional) instalador del launcher
+#   incoming/android/launcher/WereWolf-Android.apk (opcional) app de Android
 name: Publicar versión
 
 on:
@@ -31,6 +32,7 @@ jobs:
             [ -d "incoming/$platform/client" ] && builds+=(--build "$platform=incoming/$platform/client")
             for f in incoming/$platform/launcher/*; do [ -f "$f" ] && launchers+=(--launcher "$platform=$f"); done
           done
+          for f in incoming/android/launcher/*; do [ -f "$f" ] && launchers+=(--launcher "android=$f"); done
           if gh release view "v$version" >/dev/null 2>&1; then
             echo "v$version ya estaba publicada: solo se actualizan los launchers"
             builds=()

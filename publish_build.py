@@ -55,7 +55,8 @@ LAUNCHER_ASSET = "WereWolf-Setup.exe"
 MANIFEST_ASSET = "version.json"
 PLATFORMS = ("windows", "linux", "macos")
 EXE_BY_PLATFORM = {"windows": "werewolf.exe", "linux": "werewolf", "macos": "werewolf"}
-LAUNCHER_ASSETS = {"windows": "WereWolf-Setup.exe", "linux": "WereWolf-Linux.deb", "macos": "WereWolf-macOS.dmg"}
+# Android no tiene launcher ni manifiesto: la APK es la app entera.
+LAUNCHER_ASSETS = {"windows": "WereWolf-Setup.exe", "linux": "WereWolf-Linux.deb", "macos": "WereWolf-macOS.dmg", "android": "WereWolf-Android.apk"}
 
 
 def manifest_asset(platform: str) -> str:
@@ -283,7 +284,7 @@ def publish_launcher(installer: Path, version: str, gh: GitHub | None = None, pl
         raise SystemExit(f"Sistema desconocido: {platform}")
     gh = gh or github_from_env()
     asset = LAUNCHER_ASSETS[platform]
-    release = gh.release_by_tag(LAUNCHER_TAG) or gh.create_release(LAUNCHER_TAG, "Launcher de WereWolf", "Instaladores del launcher (Windows, Linux y macOS).")
+    release = gh.release_by_tag(LAUNCHER_TAG) or gh.create_release(LAUNCHER_TAG, "Launcher de WereWolf", "Instaladores del launcher (Windows, Linux y macOS) y la app de Android.")
     gh.upload(release, installer, asset)
     gh.update_release(release["id"], name=f"Launcher de WereWolf {version}", make_latest="false")
     url = gh.download_url(LAUNCHER_TAG, asset)
@@ -293,7 +294,7 @@ def publish_launcher(installer: Path, version: str, gh: GitHub | None = None, pl
 
 def split_platform(value: str, default: str = "windows") -> tuple[str, Path]:
     head, sep, tail = value.partition("=")
-    if sep and head in PLATFORMS:
+    if sep and (head in PLATFORMS or head in LAUNCHER_ASSETS):
         return head, Path(tail)
     return default, Path(value)
 
