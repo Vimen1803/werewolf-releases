@@ -1,0 +1,121 @@
+{
+  "version": "0.3.7",
+  "sha": "0cd11d645bc9b483444e82a7aa5b31b4858a850c",
+  "items": [
+    {
+      "path": "incoming/windows/client/werewolf.exe",
+      "size": 7541760,
+      "sha256": "02407e50450308645efb6e43590758e9caa1fdabcd72cc32e3f7f685e000bea4",
+      "parts": [
+        "transfer-037/0-000.part",
+        "transfer-037/0-001.part",
+        "transfer-037/0-002.part",
+        "transfer-037/0-003.part",
+        "transfer-037/0-004.part",
+        "transfer-037/0-005.part",
+        "transfer-037/0-006.part",
+        "transfer-037/0-007.part",
+        "transfer-037/0-008.part",
+        "transfer-037/0-009.part",
+        "transfer-037/0-010.part",
+        "transfer-037/0-011.part"
+      ]
+    },
+    {
+      "path": "incoming/windows/launcher/WereWolf-Setup.exe",
+      "size": 3569554,
+      "sha256": "f65bc59e808ea667bb3c866d07cec475d19b1e309cbefe6ac871de29b98d6dfc",
+      "parts": [
+        "transfer-037/1-000.part",
+        "transfer-037/1-001.part",
+        "transfer-037/1-002.part",
+        "transfer-037/1-003.part",
+        "transfer-037/1-004.part",
+        "transfer-037/1-005.part"
+      ]
+    },
+    {
+      "path": "incoming/linux/client/werewolf",
+      "size": 5712704,
+      "sha256": "f196d1e32aa11fc7011bc6bfd0495abecd25de1e4c6bddbdd4c031cddc4a7750",
+      "parts": [
+        "transfer-037/2-000.part",
+        "transfer-037/2-001.part",
+        "transfer-037/2-002.part",
+        "transfer-037/2-003.part",
+        "transfer-037/2-004.part",
+        "transfer-037/2-005.part",
+        "transfer-037/2-006.part",
+        "transfer-037/2-007.part",
+        "transfer-037/2-008.part"
+      ]
+    },
+    {
+      "path": "incoming/linux/launcher/WereWolf-Linux.deb",
+      "size": 4192250,
+      "sha256": "744908ba12a2d7f64c9efe667220fa1db74de1f1e5a4b1e73a5ff7c564643cbd",
+      "parts": [
+        "transfer-037/3-000.part",
+        "transfer-037/3-001.part",
+        "transfer-037/3-002.part",
+        "transfer-037/3-003.part",
+        "transfer-037/3-004.part",
+        "transfer-037/3-005.part",
+        "transfer-037/3-006.zpart"
+      ]
+    },
+    {
+      "path": "incoming/macos/client/werewolf",
+      "size": 11400640,
+      "sha256": "c41e2222d19cec03bdcb6517804ce53e22ddfe54bc6f75ba863a6f4a52adaf21",
+      "parts": [
+        "transfer-037/4-000.zpart",
+        "transfer-037/4-001.zpart",
+        "transfer-037/4-002.zpart",
+        "transfer-037/4-003.zpart",
+        "transfer-037/4-004.zpart",
+        "transfer-037/4-005.zpart",
+        "transfer-037/4-006.zpart",
+        "transfer-037/4-007.zpart",
+        "transfer-037/4-008.zpart",
+        "transfer-037/4-009.zpart",
+        "transfer-037/4-010.zpart",
+        "transfer-037/4-011.zpart",
+        "transfer-037/4-012.zpart",
+        "transfer-037/4-013.zpart",
+        "transfer-037/4-014.zpart",
+        "transfer-037/4-015.zpart",
+        "transfer-037/4-016.zpart"
+      ]
+    },
+    {
+      "path": "incoming/macos/launcher/WereWolf-macOS.dmg",
+      "size": 8692580,
+      "sha256": "8f8df8bc219a608addcc108f68f6ee1421190a7c388d5764f811b730e86552bc",
+      "parts": [
+        "transfer-037/5-000.zpart",
+        "transfer-037/5-001.part",
+        "transfer-037/5-002.part",
+        "transfer-037/5-003.zpart",
+        "transfer-037/5-004.part",
+        "transfer-037/5-005.zpart",
+        "transfer-037/5-006.zpart",
+        "transfer-037/5-007.part",
+        "transfer-037/5-008.zpart",
+        "transfer-037/5-009.zpart",
+        "transfer-037/5-010.zpart",
+        "transfer-037/5-011.zpart",
+        "transfer-037/5-012.zpart"
+      ]
+    },
+    {
+      "path": "incoming/android/launcher/WereWolf-Android.apk",
+      "size": 1274892,
+      "sha256": "539e84712113ef3cc462e1ee2f9895e447a7d1a6525f5c7d89e9a4fe4c6cfd92",
+      "parts": [
+        "transfer-037/6-000.zpart",
+        "transfer-037/6-001.part"
+      ]
+    }
+  ]
+}
