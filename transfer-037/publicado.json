@@ -1,0 +1,1 @@
+{"version": "0.3.7", "tag": "v0.3.7", "health": true, "manifests": {"windows": "0.3.7", "linux": "0.3.7", "macos": "0.3.7"}, "installers": ["WereWolf-Setup.exe", "WereWolf-Linux.deb", "WereWolf-macOS.dmg", "WereWolf-Android.apk"]}
