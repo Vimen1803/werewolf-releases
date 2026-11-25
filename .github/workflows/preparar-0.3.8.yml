@@ -1,0 +1,57 @@
+name: Preparar publicación 0.3.8
+on:
+  push:
+    branches: [preparar-0.3.8]
+    paths: [transfer-038/iniciar.json]
+permissions:
+  contents: write
+jobs:
+  preparar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 38
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preparar recepción de los archivos
+        run: |
+          set -euo pipefail
+          mkdir -p transfer-038
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$RUNNER_TEMP/ww-recv.pem" 2>/dev/null
+          openssl pkey -in "$RUNNER_TEMP/ww-recv.pem" -pubout -out transfer-038/clave.pem
+          git config user.name github-actions[bot]
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add transfer-038/clave.pem
+          git commit -m 'Preparar recepción de compilaciones 0.3.8'
+          git push origin HEAD:refs/heads/preparar-0.3.8
+      - name: Recibir y comprobar las compilaciones aprobadas
+        timeout-minutes: 23
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 95); do
+            git fetch --quiet origin preparar-0.3.8
+            if git show FETCH_HEAD:transfer-038/entrega.json > "$RUNNER_TEMP/ww-entrega.json" 2>/dev/null; then break; fi
+            sleep 10
+          done
+          test -s "$RUNNER_TEMP/ww-entrega.json"
+          node .github/scripts/recibir-038.cjs
+          python .github/scripts/comprobar-038.py preparar
+          git fetch origin publish
+          test "$(git rev-parse FETCH_HEAD)" = 0c1e09eff50093f7be0285b3dd9895931fa13656
+          git switch -c listos-0.3.8 FETCH_HEAD
+          cp -R "$RUNNER_TEMP/release-038/incoming/." incoming/
+          git add incoming
+          git commit -m 'Publicar WereWolf 0.3.8 para Windows, macOS, Linux y Android'
+          git push origin HEAD:refs/heads/listos-0.3.8
+      - name: Verificar la web, los instaladores y los manifiestos públicos
+        timeout-minutes: 13
+        run: |
+          set -euo pipefail
+          git fetch origin preparar-0.3.8
+          git checkout -B preparar-0.3.8 FETCH_HEAD
+          cp "$RUNNER_TEMP/release-038/index.json" transfer-038/archivos.json
+          git add transfer-038/archivos.json
+          git commit -m 'Registrar sumas de los siete binarios de la 0.3.8'
+          git push origin HEAD:refs/heads/preparar-0.3.8
+          python .github/scripts/comprobar-038.py verificar
+          git add transfer-038/publicado.json
+          git commit -m 'Verificar públicamente WereWolf 0.3.8'
+          git push origin HEAD:refs/heads/preparar-0.3.8
