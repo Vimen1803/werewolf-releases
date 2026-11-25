@@ -18,6 +18,7 @@ jobs:
           import json
           import os
           import re
+          import zlib
           from pathlib import Path
           index = json.loads(Path('transfer-037/index.json').read_text(encoding='utf-8'))
           expected = {
@@ -40,9 +41,11 @@ jobs:
               digest = hashlib.sha256()
               with target.open('wb') as output:
                   for part in item['parts']:
-                      if not re.fullmatch(r'transfer-037/[0-6]-[0-9]{3}\.part', part):
+                      if not re.fullmatch(r'transfer-037/[0-6]-[0-9]{3}\.z?part', part):
                           raise SystemExit('Nombre de fragmento inválido')
                       data = Path(part).read_bytes()
+                      if part.endswith('.zpart'):
+                          data = zlib.decompress(data)
                       digest.update(data)
                       output.write(data)
               if target.stat().st_size != item['size'] or digest.hexdigest() != item['sha256']:
@@ -59,3 +62,74 @@ jobs:
           git add incoming
           git commit -m 'Publicar WereWolf 0.3.7 para Windows, macOS, Linux y Android'
           git push origin HEAD:refs/heads/listos-0.3.7
+      - name: Verificar descargas y manifiestos públicos
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          git switch preparar-0.3.7
+          python - <<'PY'
+          import hashlib
+          import json
+          import time
+          import urllib.request
+          from pathlib import Path
+          index = json.loads(Path('transfer-037/index.json').read_text(encoding='utf-8'))
+          expected = {item['path']: item for item in index['items']}
+          project = 'https://github.com/Vimen1803/werewolf-releases'
+          api = 'https://api.github.com/repos/Vimen1803/werewolf-releases'
+          render = 'https://werewolf-ye7x.onrender.com'
+          def open_url(url, accept='application/json'):
+              request = urllib.request.Request(url, headers={'User-Agent': 'WereWolf release check', 'Accept': accept})
+              return urllib.request.urlopen(request, timeout=25)
+          def json_url(url):
+              with open_url(url) as stream:
+                  return json.load(stream)
+          def require(condition, message):
+              if not condition:
+                  raise ValueError(message)
+          deadline = time.monotonic() + 550
+          while True:
+              try:
+                  latest = json_url(api + '/releases/latest')
+                  require(latest.get('tag_name') == 'v0.3.7', 'Esperando v0.3.7 como versión estable')
+                  require(json_url(render + '/health').get('ok') is True, 'Esperando respuesta de Render')
+                  version = json_url(render + '/api/version')
+                  require(version.get('version') == version.get('desktopVersion') == '0.3.7', 'Esperando actualizar el manifiesto en Render')
+                  launchers = json_url(api + '/releases/tags/launcher')
+                  require(launchers.get('name') == 'Launcher de WereWolf 0.3.7', 'Esperando los instaladores públicos')
+                  assets = {asset['name']: asset for asset in launchers['assets']}
+                  desktop = {}
+                  for platform in ('windows', 'linux', 'macos'):
+                      manifest = json_url(render + '/api/desktop/manifest?platform=' + platform)
+                      require(manifest.get('version') == '0.3.7' and manifest.get('platform') == platform, 'Manifiesto anterior de ' + platform)
+                      exe = 'werewolf.exe' if platform == 'windows' else 'werewolf'
+                      client = expected[f'incoming/{platform}/client/{exe}']
+                      entry = next((f for f in manifest['files'] if f['path'] == exe), {})
+                      require(entry.get('sha256') == client['sha256'] and entry.get('size') == client['size'], 'Hash de cliente distinto para ' + platform)
+                      desktop[platform] = manifest['version']
+                  checked = []
+                  for path, item in expected.items():
+                      if '/launcher/' not in path:
+                          continue
+                      name = Path(path).name
+                      asset = assets.get(name, {})
+                      require(asset.get('size') == item['size'], 'Tamaño de instalador pendiente para ' + name)
+                      digest = hashlib.sha256()
+                      with open_url(project + '/releases/download/launcher/' + name, 'application/octet-stream') as stream:
+                          for part in iter(lambda: stream.read(128 * 1024), b''):
+                              digest.update(part)
+                      require(digest.hexdigest() == item['sha256'], 'Hash de instalador distinto para ' + name)
+                      checked.append(name)
+                  result = {'version': '0.3.7', 'tag': latest['tag_name'], 'health': True, 'manifests': desktop, 'installers': checked}
+                  Path('transfer-037/publicado.json').write_text(json.dumps(result), encoding='utf-8')
+                  print(json.dumps(result))
+                  break
+              except Exception as error:
+                  if time.monotonic() >= deadline:
+                      raise
+                  print(str(error), flush=True)
+                  time.sleep(15)
+          PY
+          git add transfer-037/publicado.json
+          git commit -m 'Verificar las descargas públicas de WereWolf 0.3.7'
+          git push origin HEAD:refs/heads/preparar-0.3.7
