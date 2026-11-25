@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import secrets
 import shutil
 import sys
 import time
@@ -72,6 +73,21 @@ def preparar():
     (root / 'incoming/VERSION').write_text('0.3.8\n', encoding='utf-8')
     proof.write_text(json.dumps({'version': '0.3.8', 'commit': expected['commit'], 'items': items}), encoding='utf-8')
 
+def verificar_login():
+    verifier = secrets.token_urlsafe(32)
+    endpoint = render + '/api/auth/launcher'
+    def post(body):
+        data = json.dumps(body).encode('utf-8')
+        return urlopen(Request(endpoint, data=data, headers={
+            'Content-Type': 'application/json',
+            'User-Agent': 'WereWolf Release Check',
+        }), timeout=40)
+    with post({'action': 'start', 'verifier': verifier}) as response:
+        state = json.load(response).get('state', '')
+    require(len(state) == 43 and all(c.isalnum() or c in '_-' for c in state), 'El inicio HTTPS no prepara una solicitud válida')
+    with post({'action': 'redeem', 'state': state, 'verifier': verifier}) as response:
+        require(response.status == 202 and not response.read(), 'El inicio HTTPS no espera la aprobación de Google')
+
 def verificar():
     expected = json.loads(proof.read_text())['items']
     deadline = time.monotonic() + 680
@@ -104,7 +120,8 @@ def verificar():
                     digest = hashlib.file_digest(source, 'sha256').hexdigest()
                 require(digest == file['sha256'], f'Hash incorrecto de {name}')
                 checked.append(name)
-            result = {'version': '0.3.8', 'tag': latest['tag_name'], 'health': True, 'manifests': platforms, 'installers': checked}
+            verificar_login()
+            result = {'version': '0.3.8', 'tag': latest['tag_name'], 'health': True, 'loginHttps': True, 'manifests': platforms, 'installers': checked}
             Path('transfer-038/publicado.json').write_text(json.dumps(result), encoding='utf-8')
             print(json.dumps(result))
             return
