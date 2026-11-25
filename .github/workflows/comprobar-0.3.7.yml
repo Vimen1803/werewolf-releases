@@ -1,0 +1,61 @@
+name: Comprobar archivos de publicación 0.3.7
+on:
+  push:
+    branches: [preparar-0.3.7]
+    paths: ['transfer-037/index.json']
+permissions:
+  contents: write
+jobs:
+  comprobar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Comprobar los siete binarios y preparar la publicación
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          from pathlib import Path
+          index = json.loads(Path('transfer-037/index.json').read_text(encoding='utf-8'))
+          expected = {
+              'incoming/windows/client/werewolf.exe',
+              'incoming/windows/launcher/WereWolf-Setup.exe',
+              'incoming/linux/client/werewolf',
+              'incoming/linux/launcher/WereWolf-Linux.deb',
+              'incoming/macos/client/werewolf',
+              'incoming/macos/launcher/WereWolf-macOS.dmg',
+              'incoming/android/launcher/WereWolf-Android.apk',
+          }
+          if index['version'] != '0.3.7' or index['sha'] != '0cd11d645bc9b483444e82a7aa5b31b4858a850c':
+              raise SystemExit('Revisión de compilación incorrecta')
+          if len(index['items']) != 7 or {item['path'] for item in index['items']} != expected:
+              raise SystemExit('Faltan archivos o hay destinos inesperados')
+          target_root = Path(os.environ['RUNNER_TEMP']) / 'release-037'
+          for item in index['items']:
+              target = target_root / item['path']
+              target.parent.mkdir(parents=True, exist_ok=True)
+              digest = hashlib.sha256()
+              with target.open('wb') as output:
+                  for part in item['parts']:
+                      if not re.fullmatch(r'transfer-037/[0-6]-[0-9]{3}\.part', part):
+                          raise SystemExit('Nombre de fragmento inválido')
+                      data = Path(part).read_bytes()
+                      digest.update(data)
+                      output.write(data)
+              if target.stat().st_size != item['size'] or digest.hexdigest() != item['sha256']:
+                  raise SystemExit(f'Archivo incompleto o incorrecto: {item["path"]}')
+              print(f'Comprobado {item["path"]}')
+          (target_root / 'incoming/VERSION').write_text('0.3.7\n', encoding='utf-8')
+          PY
+          git fetch origin publish
+          test "$(git rev-parse FETCH_HEAD)" = 63dd1f5adbbe8a4b760e03028f8550d848a50839
+          git switch -c listos-0.3.7 FETCH_HEAD
+          cp -R "$RUNNER_TEMP/release-037/incoming/." incoming/
+          git config user.name github-actions[bot]
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add incoming
+          git commit -m 'Publicar WereWolf 0.3.7 para Windows, macOS, Linux y Android'
+          git push origin HEAD:refs/heads/listos-0.3.7
