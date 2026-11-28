@@ -38,4 +38,14 @@ jobs:
             builds=()
           fi
           [ ${#builds[@]} -gt 0 ] || [ ${#launchers[@]} -gt 0 ] || { echo "Nada que publicar"; exit 0; }
-          python publish_build.py --version "$version" "${builds[@]}" "${launchers[@]}"
+          options=()
+          if [ -f "incoming/notes/$version.md" ]; then options+=(--release-notes "incoming/notes/$version.md"); fi
+          if [ -f "incoming/stage/$version" ]; then options+=(--defer-latest); fi
+          if [ "${#builds[@]}" -gt 0 ] && [ -f incoming/android/launcher/WereWolf-Android.apk ]; then
+            apksigner=$(find "${ANDROID_HOME:?}/build-tools" -name apksigner -type f | sort -V | tail -n 1)
+            [ -x "$apksigner" ]
+            certificate=$("$apksigner" verify --print-certs incoming/android/launcher/WereWolf-Android.apk | sed -n 's/^Signer #[0-9]* certificate SHA-256 digest: //p')
+            [[ "$certificate" =~ ^[a-f0-9]{64}$ ]]
+            options+=(--android-cert-sha256 "$certificate")
+          fi
+          python publish_build.py --version "$version" "${builds[@]}" "${launchers[@]}" "${options[@]}"

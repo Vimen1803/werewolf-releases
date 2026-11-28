@@ -38,6 +38,7 @@ import hashlib
 import json
 import mimetypes
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -155,10 +156,10 @@ class GitHub:
     def latest(self):
         return self.request("GET", "/releases/latest")
 
-    def create_release(self, tag: str, name: str, body: str):
+    def create_release(self, tag: str, name: str, body: str, *, draft: bool = False):
         # Nunca nace como «latest»: hasta que version.json está subido, los
         # jugadores siguen viendo la versión anterior completa.
-        return self.request("POST", "/releases", {"tag_name": tag, "name": name, "body": body, "draft": False, "prerelease": False, "make_latest": "false"})
+        return self.request("POST", "/releases", {"tag_name": tag, "name": name, "body": body, "draft": draft, "prerelease": False, "make_latest": "false"})
 
     def update_release(self, release_id: int, **fields):
         return self.request("PATCH", f"/releases/{release_id}", fields)
@@ -205,8 +206,18 @@ def publish(build_dir: Path, version: str, exe: str, excludes: list[str], dry_ru
     return publish_many({"windows": (build_dir, exe)}, version, excludes, dry_run, gh)
 
 
-def publish_many(builds: dict, version: str, excludes: list[str], dry_run: bool = False, gh: GitHub | None = None) -> dict:
+def publish_many(
+    builds: dict, version: str, excludes: list[str], dry_run: bool = False, gh: GitHub | None = None, *,
+    installers: dict[str, Path] | None = None, notes: str | None = None,
+    android_certificate: str | None = None, defer_latest: bool = False,
+) -> dict:
     """builds: {sistema: (carpeta, ejecutable)}. Todas van en la release v<versión>."""
+    installers = installers or {}
+    for platform, path in installers.items():
+        if platform not in LAUNCHER_ASSETS or not path.is_file():
+            raise SystemExit(f"No se puede publicar el instalador de {platform}: {path}")
+    if android_certificate and ("android" not in installers or not re.fullmatch(r"[a-f0-9]{64}", android_certificate)):
+        raise SystemExit("La huella del firmante Android requiere un APK y 64 caracteres hexadecimales.")
     scanned = {}
     for platform, (build_dir, exe) in builds.items():
         if platform not in PLATFORMS:
@@ -225,8 +236,9 @@ def publish_many(builds: dict, version: str, excludes: list[str], dry_run: bool 
         gh = github_from_env()
     tag = f"v{version}"
     known: dict[str, str] = {}
+    existing = gh.release_by_tag(tag) if gh else None
     if gh:
-        if gh.release_by_tag(tag):
+        if existing and not existing.get("draft"):
             raise SystemExit(f"La versión {version} ya está publicada. Súbela con `npm run release:patch` y vuelve a compilar.")
         latest = gh.latest()
         if latest:
@@ -261,18 +273,28 @@ def publish_many(builds: dict, version: str, excludes: list[str], dry_run: bool 
         print(json.dumps(manifests, indent=2, ensure_ascii=False)[:3000])
         return {"manifest": manifests.get("windows"), "manifests": manifests, "uploaded": []}
 
-    release = gh.create_release(tag, f"WereWolf {version}", f"Cliente de escritorio {version} ({', '.join(builds)}).")
+    release = existing or gh.create_release(
+        tag, f"WereWolf {version}", notes or f"Cliente de escritorio {version} ({', '.join(builds)}).", draft=True,
+    )
     uploaded = []
     for index, (platform, item, name) in enumerate(pending, 1):
         gh.upload(release, builds[platform][0] / item["path"], name)
         uploaded.append(item["path"] if platform == "windows" else f"{platform}:{item['path']}")
         print(f"  [{index}/{len(pending)}] {platform}: {item['path']}")
+    for platform, installer in installers.items():
+        gh.upload(release, installer, LAUNCHER_ASSETS[platform])
     with tempfile.TemporaryDirectory() as folder:
+        if android_certificate:
+            certificate = Path(folder) / "android-signing-sha256.txt"
+            certificate.write_text(android_certificate + "\n", encoding="utf-8")
+            gh.upload(release, certificate, certificate.name)
         for platform, manifest in manifests.items():
             path = Path(folder) / manifest_asset(platform)
             path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
             gh.upload(release, path, path.name)
-    gh.update_release(release["id"], make_latest="true")
+    gh.update_release(release["id"], draft=False, make_latest="false" if defer_latest else "true")
+    if defer_latest:
+        print("La versión está publicada. El manifiesto latest se activará después de desplegar la web.")
     print(f"Publicada la versión {version}. Manifiesto: {gh.web}/{gh.repo}/releases/latest/download/{MANIFEST_ASSET}")
     return {"manifest": manifests.get("windows"), "manifests": manifests, "uploaded": uploaded}
 
@@ -306,6 +328,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--client", action="store_true", help="Publica desktop/target/release/werewolf(.exe) de este sistema")
     parser.add_argument("--build", action="append", default=[], metavar="SISTEMA=CARPETA", help="Build de un sistema (windows, linux, macos); se puede repetir")
     parser.add_argument("--launcher", action="append", default=[], metavar="[SISTEMA=]INSTALADOR", help="Sube el instalador del launcher de ese sistema (por defecto, windows); se puede repetir")
+    parser.add_argument("--release-notes", type=Path, help="Notas Markdown de la publicación de esta versión")
+    parser.add_argument("--android-cert-sha256", help="Huella SHA-256 del certificado de firma del APK")
+    parser.add_argument("--defer-latest", action="store_true", help="Publica los archivos sin cambiar todavía el canal latest")
     parser.add_argument("--version", help="Versión (por defecto, la de desktop/Cargo.toml)")
     parser.add_argument("--exe", default=DEFAULT_EXE, help="Ejecutable del juego, relativo a la carpeta de la build")
     parser.add_argument("--exclude", action="append", default=[], help="Patrón a excluir (se puede repetir)")
@@ -319,6 +344,8 @@ def main(argv: list[str] | None = None) -> int:
     if expected and args.version and args.version != expected:
         print(f"Aviso: --version {args.version} no coincide con desktop/Cargo.toml ({expected}). El ejecutable informa de la versión con la que se compiló.")
 
+    installers = dict(split_platform(value) for value in args.launcher)
+    notes = args.release_notes.read_text(encoding="utf-8").strip() if args.release_notes else None
     excludes = DEFAULT_EXCLUDES + args.exclude
     builds = {}
     for value in args.build:
@@ -338,10 +365,13 @@ def main(argv: list[str] | None = None) -> int:
             shutil.copy2(built, Path(folder) / exe)
             builds[platform] = (Path(folder), exe)
         if builds:
-            publish_many(builds, version, excludes, args.dry_run)
-        for value in args.launcher:
-            platform, installer = split_platform(value)
-            publish_launcher(installer, version, platform=platform)
+            publish_many(
+                builds, version, excludes, args.dry_run, installers=installers, notes=notes,
+                android_certificate=args.android_cert_sha256, defer_latest=args.defer_latest,
+            )
+        if not args.dry_run:
+            for platform, installer in installers.items():
+                publish_launcher(installer, version, platform=platform)
     if not builds and not args.launcher:
         parser.error("Indica la carpeta de la build, --build, --client o --launcher.")
     return 0
