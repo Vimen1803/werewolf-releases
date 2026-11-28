@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Publicar
         run: |
-          set -e
+          set -eo pipefail
           version=$(tr -d '[:space:]' < incoming/VERSION)
           builds=(); launchers=()
           for platform in windows linux macos; do
@@ -33,7 +33,7 @@ jobs:
             for f in incoming/$platform/launcher/*; do [ -f "$f" ] && launchers+=(--launcher "$platform=$f"); done
           done
           for f in incoming/android/launcher/*; do [ -f "$f" ] && launchers+=(--launcher "android=$f"); done
-          if gh release view "v$version" >/dev/null 2>&1; then
+          if [ "$(gh release view "v$version" --json isDraft --jq .isDraft 2>/dev/null || true)" = false ]; then
             echo "v$version ya estaba publicada: solo se actualizan los launchers"
             builds=()
           fi
@@ -42,9 +42,12 @@ jobs:
           if [ -f "incoming/notes/$version.md" ]; then options+=(--release-notes "incoming/notes/$version.md"); fi
           if [ -f "incoming/stage/$version" ]; then options+=(--defer-latest); fi
           if [ "${#builds[@]}" -gt 0 ] && [ -f incoming/android/launcher/WereWolf-Android.apk ]; then
-            apksigner=$(find "${ANDROID_HOME:?}/build-tools" -name apksigner -type f | sort -V | tail -n 1)
+            apksigner="${ANDROID_HOME:?}/build-tools/35.0.0/apksigner"
+            if [ ! -x "$apksigner" ]; then sdkmanager "build-tools;35.0.0"; fi
             [ -x "$apksigner" ]
-            certificate=$("$apksigner" verify --print-certs incoming/android/launcher/WereWolf-Android.apk | sed -n 's/^Signer #[0-9]* certificate SHA-256 digest: //p')
+            signature=$("$apksigner" verify --print-certs incoming/android/launcher/WereWolf-Android.apk)
+            certificate=$(printf '%s\n' "$signature" | sed -nE 's/^.*certificate SHA-256 digest:[[:space:]]*([a-fA-F0-9]{64})[[:space:]]*$/\1/p' | tr 'A-F' 'a-f')
+            if [ -z "$certificate" ]; then echo "::error::No se pudo leer la huella del certificado Android"; exit 1; fi
             [[ "$certificate" =~ ^[a-f0-9]{64}$ ]]
             options+=(--android-cert-sha256 "$certificate")
           fi
